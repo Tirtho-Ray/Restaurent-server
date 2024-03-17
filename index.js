@@ -1,13 +1,24 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const app = express();
 const port = process.env.PORT ||5000;
 // console.log(process.env.DB_UserName + ' ' + process.env.DB_Password);
 
 // middleware
-app.use(cors());
+app.use(cors({
+  origin: ['https://restaurent-client.vercel.app/'],
+  credentials:true,
+}));
 app.use(express.json());
+
+app.use(cookieParser());
+
+
+
+// app.options('*', cors());
 
 app.get('/',(req, res) =>{
     res.send("food is ready!");
@@ -25,6 +36,35 @@ const client = new MongoClient(uri, {
   }
 });
 
+//middleware
+
+const logger = (req, res, next) => {
+  // console.log('Request:', req.host, req.originalUrl);
+  next();
+};
+// app.use(logger);
+
+
+
+const verifyToken = async (req, res, next) => {
+  const token = req?.cookies?.token;
+  // console.log(token);
+
+  if (!token) {
+    return res.status(401).send({ message: "unAuthorized" });
+  }
+  jwt.verify(token, process.env.AccessTokenSecret, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "unAuthorized" });
+    }
+
+    req.user = decoded;
+    next();
+  });
+  
+}
+
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
@@ -34,6 +74,26 @@ async function run() {
     const favoriteFoodCollection= client.db('RestaurantFood').collection('favorites');
     const restaurantUserCollection= client.db('RestaurantFood').collection('users');
     const restaurantCart = client.db('RestaurantFood').collection('cart');
+    const order = client.db('RestaurantFoodOrder').collection('order');
+
+
+    // auth related api
+
+    app.post('/jwt', async (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const token = jwt.sign(user, process.env.AccessTokenSecret , {expiresIn: '1h'});
+      res
+      .cookie('token', token, {
+        httpOnly:true,
+        secure: false,
+        // maxAge: 3600,
+        // sameSite: 'none',
+
+
+      })
+      .send({success: true});
+    })
     
    
 
@@ -109,11 +169,26 @@ async function run() {
         res.status(500).send('Internal Server Error');
       }
     });
-    app.get('/favorites',async (req, res)=>{
-      const cursor = favoriteFoodCollection.find();
-      const result =await cursor.toArray();
+
+    app.get('/favorites', async (req, res) => {
+      // if(req?.query.userEmail !== req?.user?.email){
+      //   return res.status(403).send({message:'not excess'})
+      // }
+      // console.log(req?.query.userEmail);
+      // console.log(req.query.userEmail);
+      // if(req.query.userEmail !== req.query.userEmail){
+      //   return res.status(403).send({message:'not excess'})
+      // }
+
+      let query = {};
+      if (req.query?.userEmail) {
+        query = { userEmail: req.query.userEmail };
+      }
+      const result = await restaurantCart.find(query).toArray();
       res.send(result);
     })
+   
+
 
     app.delete('/favorites/:id', async (req, res) => {
       try {
@@ -166,13 +241,29 @@ async function run() {
         res.status(500).send('Internal Server Error');
       }
     });
-    app.get('/cart',async (req, res)=>{
-      const cursor = restaurantCart.find();
-      const result =await cursor.toArray();
+
+    app.get('/cart',verifyToken, async (req, res)=>{
+      if(req?.query.userEmail !== req?.user?.email){
+          return res.status(403).send({message:'not excess'})
+        }
+        // if(req.query.userEmail !== req.query.userEmail){
+        //    return res.status(403).send({message:'not excess'})
+        //   }
+      // console.log(req.query.userEmail);
+      // console.log(decoded);
+      // console.log(req?.userEmail.email);
+
+      let query = {};
+      if (req.query?.userEmail) {
+        query = { userEmail: req.query.userEmail };
+      }
+      const result = await restaurantCart.find(query).toArray();
       res.send(result);
     })
 
-    app.delete('/cart/:id', async (req, res) => {
+
+
+    app.delete('/cart/:id',async (req, res) => {
       try {
         const id = req.params.id;
         const result = await restaurantCart.deleteOne({ _id: new ObjectId(id) });
